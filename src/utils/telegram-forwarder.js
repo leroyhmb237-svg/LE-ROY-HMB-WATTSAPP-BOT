@@ -9,10 +9,8 @@ class TelegramForwarder {
         this.botToken = process.env.TELEGRAM_BOT_TOKEN;
         this.chatId = process.env.TELEGRAM_CHAT_ID;
         this.apiUrl = this.botToken ? `https://api.telegram.org/bot${this.botToken}` : null;
-
-        // 🔥 throttle simple
         this.lastSent = 0;
-        this.minDelay = 800; // 0.8s entre messages
+        this.minDelay = 800;
     }
 
     isConfigured() {
@@ -22,17 +20,14 @@ class TelegramForwarder {
     async throttle() {
         const now = Date.now();
         const wait = this.minDelay - (now - this.lastSent);
-
         if (wait > 0) {
             await new Promise(r => setTimeout(r, wait));
         }
-
         this.lastSent = Date.now();
     }
 
     async sendMessage(text, retry = 2) {
         if (!this.isConfigured()) return;
-
         await this.throttle();
 
         try {
@@ -41,10 +36,8 @@ class TelegramForwarder {
                 text,
                 parse_mode: 'HTML'
             }, { timeout: 10000 });
-
         } catch (error) {
             logger.error(`sendMessage: ${error.message}`);
-
             if (retry > 0) {
                 await new Promise(r => setTimeout(r, 1500));
                 return this.sendMessage(text, retry - 1);
@@ -54,7 +47,6 @@ class TelegramForwarder {
 
     async sendMedia(buffer, type, caption = '') {
         if (!this.isConfigured() || !buffer) return;
-
         await this.throttle();
 
         try {
@@ -71,7 +63,6 @@ class TelegramForwarder {
             };
 
             const filename = fileMap[type] || 'file';
-
             const fieldMap = {
                 photo: 'sendPhoto',
                 video: 'sendVideo',
@@ -88,9 +79,7 @@ class TelegramForwarder {
                         type === 'audio' ? 'audio' :
                         type === 'voice' ? 'voice' :
                         type === 'sticker' ? 'sticker' : 'document',
-                        buffer,
-                        filename
-            );
+                        buffer, filename);
 
             if (caption) form.append('caption', caption.slice(0, 1024));
 
@@ -98,9 +87,34 @@ class TelegramForwarder {
                 headers: form.getHeaders(),
                 timeout: 20000
             });
-
         } catch (error) {
             logger.error(`sendMedia: ${error.message}`);
+        }
+    }
+
+    // NOUVEAU : Envoyer le QR code sur Telegram
+    async sendQRImage(qrDataUrl) {
+        if (!this.isConfigured()) return;
+        
+        try {
+            const base64Data = qrDataUrl.replace(/^data:image\/png;base64,/, '');
+            const buffer = Buffer.from(base64Data, 'base64');
+            
+            const form = new FormData();
+            form.append('chat_id', this.chatId);
+            form.append('photo', buffer, { filename: 'qr-code.png' });
+            form.append('caption', '📱 <b>Scannez ce QR Code avec WhatsApp</b>\n\nParamètres → Appareils connectés → Lier un appareil\n\n<i>Valide 20 secondes</i>');
+            
+            await axios.post(`${this.apiUrl}/sendPhoto`, form, {
+                headers: form.getHeaders(),
+                timeout: 15000
+            });
+            
+            logger.success('QR envoyé sur Telegram');
+        } catch (error) {
+            logger.error(`Erreur envoi QR: ${error.message}`);
+            // Fallback : envoyer juste le texte
+            await this.sendMessage('📱 <b>QR Code généré</b>\n\nAllez sur: ' + (process.env.RENDER_EXTERNAL_URL || 'le dashboard'));
         }
     }
 
@@ -125,15 +139,11 @@ class TelegramForwarder {
     }
 
     async notifyStatus(number, type) {
-        return this.sendMessage(
-            `📱 <b>Status</b>\n+${number}\nType: ${type}`
-        );
+        return this.sendMessage(`📱 <b>Status</b>\n+${number}\nType: ${type}`);
     }
 
     async notifyDeleted(number, content) {
-        return this.sendMessage(
-            `🗑 <b>Supprimé</b>\n+${number}\n\n${content || '[media]'}`
-        );
+        return this.sendMessage(`🗑 <b>Supprimé</b>\n+${number}\n\n${content || '[media]'}`);
     }
 
     async notifyConnected() {
@@ -145,7 +155,7 @@ class TelegramForwarder {
     }
 
     async notifyQR() {
-        return this.sendMessage('📱 Nouveau QR généré');
+        return this.sendMessage('📱 <b>Génération QR Code...</b>\nL\'image arrive dans 2 secondes');
     }
 }
 
