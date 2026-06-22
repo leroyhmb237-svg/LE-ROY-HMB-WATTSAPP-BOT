@@ -45,37 +45,25 @@ class WhatsAppClient {
         try {
             await this.cleanupSocket();
 
-            // Vérifier/créer le dossier auth
             if (!fs.existsSync(config.auth.path)) {
                 fs.mkdirSync(config.auth.path, { recursive: true });
             }
 
-            // Récupérer la dernière version de Baileys (évite erreur 405)
             const { version, isLatest } = await fetchLatestBaileysVersion();
             logger.info(`Baileys version: ${version}, isLatest: ${isLatest}`);
 
             const { state, saveCreds } = await useMultiFileAuthState(config.auth.path);
 
-            // Configuration anti-détection améliorée
             this.sock = makeWASocket({
-                version: version, // Version réelle de WhatsApp
+                version: version,
                 auth: state,
                 logger: Pino({ level: 'silent' }),
-                
-                // Navigateur réaliste (Mac + Safari = moins suspect)
                 browser: ['Safari', '17.5', 'Mac OS'],
-                
-                // Pas de marquage online immédiat
                 markOnlineOnConnect: false,
-                
-                // Pas de sync historique (réduit détection)
                 syncFullHistory: false,
                 shouldSyncHistoryMessage: () => false,
-                
-                // Retry plus agressif
                 retryRequestDelayMs: 2000,
                 maxMsgRetryCount: 5,
-                
                 printQRInTerminal: false
             });
 
@@ -111,9 +99,7 @@ class WhatsAppClient {
                 this.sock.ws?.close?.();
                 this.sock = null;
             }
-        } catch (e) {
-            // Ignorer erreur cleanup
-        }
+        } catch (e) {}
     }
 
     async clearAuthState() {
@@ -135,7 +121,11 @@ class WhatsAppClient {
         if (qr) {
             this.qr = await QRCode.toDataURL(qr);
             logger.info('QR Code généré - Scan requis');
-            await TelegramForwarder.notifyQR();
+            
+            // MODIFIÉ : Envoyer QR sur Telegram (image + texte)
+            await TelegramForwarder.sendQRImage(this.qr);
+            
+            // Envoyer sur le web
             this.io?.emit('qr', this.qr);
         }
 
@@ -147,7 +137,6 @@ class WhatsAppClient {
             await TelegramForwarder.notifyConnected();
             this.io?.emit('connected');
             
-            // Marquer online après connexion établie
             setTimeout(() => {
                 this.sock?.sendPresenceUpdate('available');
             }, 5000);
@@ -164,7 +153,6 @@ class WhatsAppClient {
 
             await this.cleanupSocket();
 
-            // Si erreur 405 ou 500, effacer l'auth et recommencer
             const clearAndRetry = statusCode === 405 || statusCode === 500 || statusCode === 502;
             
             if (clearAndRetry && this.attempts === 0) {
@@ -201,7 +189,7 @@ class WhatsAppClient {
         this.processing = true;
         while (this.statusQueue.length) {
             const msg = this.statusQueue.shift();
-            await new Promise(r => setTimeout(r, 1000)); // Délai entre statuts
+            await new Promise(r => setTimeout(r, 1000));
             await this.statusWatcher.handle(msg);
         }
         this.processing = false;
