@@ -3,108 +3,89 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HMB BOT WHATSAPP</title>
-
+    <title>WhatsApp Bot</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-
         body {
             font-family: Arial, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            background: #1a1a2e;
             color: white;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
+            min-height: 100vh;
+            padding: 20px;
         }
-
         .container {
             text-align: center;
-            width: 90%;
-            max-width: 420px;
+            max-width: 400px;
         }
-
-        h1 {
-            margin-bottom: 20px;
-        }
-
+        h1 { margin-bottom: 20px; }
         .status {
             padding: 15px;
-            border-radius: 12px;
+            border-radius: 10px;
             margin-bottom: 20px;
-            font-weight: bold;
         }
-
         .online { background: #00c853; color: black; }
         .offline { background: #d50000; }
         .connecting { background: #ffab00; color: black; }
-
         .qr-box {
             background: white;
-            color: black;
             padding: 20px;
-            border-radius: 12px;
+            border-radius: 10px;
         }
-
         .qr-box img {
-            width: 220px;
-            margin-top: 10px;
+            max-width: 100%;
+            width: 280px;
         }
-
-        .hidden { display: none; }
+        .hidden { display: none !important; }
     </style>
 </head>
-
 <body>
-<div class="container">
-    <h1>🤖 WhatsApp Bot</h1>
-
-    <div id="status" class="status offline">⏳ Waiting...</div>
-
-    <div id="qr-box" class="qr-box hidden">
-        <h3>Scan QR Code</h3>
-        <p>WhatsApp → Linked Devices</p>
-        <img id="qr" />
+    <div class="container">
+        <h1>🤖 HMB BOT WHATSAPP </h1>
+        <div id="status" class="status offline">⏳ En attente...</div>
+        <div id="qr-box" class="qr-box hidden">
+            <h3>📱 Scannez ce QR Code</h3>
+            <p>WhatsApp → Paramètres → Appareils connectés</p>
+            <img id="qr-img" alt="QR Code" />
+        </div>
     </div>
-</div>
 
-<script src="/socket.io/socket.io.js"></script>
-<script>
-    let socket;
-
-    function connectSocket() {
-        socket = io({
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io({
             reconnection: true,
-            reconnectionAttempts: Infinity,
-            reconnectionDelay: 2000
+            reconnectionAttempts: Infinity
         });
-
+        
+        const statusDiv = document.getElementById('status');
+        const qrBox = document.getElementById('qr-box');
+        const qrImg = document.getElementById('qr-img');
+        
         socket.on('connect', () => {
-            console.log('Connected UI');
+            console.log('Connecté au serveur');
+            statusDiv.textContent = '⏳ Connexion...';
         });
-
-        socket.on('qr', (qr) => {
-            document.getElementById('status').className = 'status connecting';
-            document.getElementById('status').textContent = 'QR Ready...';
-
-            document.getElementById('qr-box').classList.remove('hidden');
-            document.getElementById('qr').src = qr;
+        
+        socket.on('qr', (qrData) => {
+            console.log('QR reçu');
+            statusDiv.className = 'status connecting';
+            statusDiv.textContent = '📱 QR Code prêt - SCANNEZ !';
+            qrBox.classList.remove('hidden');
+            qrImg.src = qrData;
         });
-
+        
         socket.on('connected', () => {
-            document.getElementById('status').className = 'status online';
-            document.getElementById('status').textContent = '✅ Connected';
-
-            document.getElementById('qr-box').classList.add('hidden');
+            statusDiv.className = 'status online';
+            statusDiv.textContent = '✅ Connecté !';
+            qrBox.classList.add('hidden');
         });
-
+        
         socket.on('disconnect', () => {
-            document.getElementById('status').className = 'status offline';
-            document.getElementById('status').textContent = '❌ Disconnected';
+            statusDiv.className = 'status offline';
+            statusDiv.textContent = '❌ Déconnecté';
         });
-    }
-
-    connectSocket();
-</script>
+    </script>
 </body>
-  </html>
+</html>
