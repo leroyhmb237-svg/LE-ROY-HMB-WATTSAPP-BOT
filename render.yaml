@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: whatsapp-human-bot
+    runtime: node
+    plan: free
+
+    buildCommand: npm install
+    startCommand: node src/index.js
+
+    healthCheckPath: /health
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # ✅ FIX IMPORTANT (DOIT MATCHER TON CODE)
+      - key: AUTH_PATH
+        value: /tmp/whatsapp_auth_v2
+
+      - key: MAX_DAILY_MESSAGES
+        value: "100"
+
+      - key: NIGHT_MODE
+        value: "true"
