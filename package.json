@@ -1,0 +1,29 @@
+{
+  "name": "whatsapp-human-bot",
+  "version": "4.0.0",
+  "description": "Bot WhatsApp Ultra Human - Telegram Only",
+  "main": "src/index.js",
+  "type": "commonjs",
+
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node src/index.js"
+  },
+
+  "engines": {
+    "node": "20.x"
+  },
+
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.7.22",
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "form-data": "^4.0.0",
+    "pino": "^8.17.2",
+    "pino-pretty": "^10.3.1",
+    "qrcode": "^1.5.3",
+    "socket.io": "^4.8.1"
+  }
+}
