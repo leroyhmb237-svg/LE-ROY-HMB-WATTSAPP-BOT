@@ -11,70 +11,90 @@ class MessageHandler {
     }
 
     async handle(m) {
-        if (!m?.messages || !Array.isArray(m.messages)) return;
+        if (m.type !== 'notify') return;
 
         for (const msg of m.messages) {
-            try {
-                await this.process(msg);
-            } catch (e) {
-                logger.error(`process error: ${e.message}`);
-            }
+            await this.process(msg);
         }
     }
 
     async process(msg) {
-        if (!msg?.key?.remoteJid) return;
+        if (!msg.key.remoteJid) return;
+        
+        // Ignorer status@broadcast (déjà géré par status-watcher)
         if (msg.key.remoteJid === 'status@broadcast') return;
+        
+        // Ignorer messages envoyés par moi
         if (msg.key.fromMe) return;
 
         const id = msg.key.id;
-        const number = msg.key.remoteJid.split('@')[0];
+        const jid = msg.key.remoteJid;
+        
+        // 🔥 DÉTECTION : Groupe ou Contact ?
+        const isGroup = jid.endsWith('@g.us');
+        const isContact = jid.endsWith('@s.whatsapp.net');
+        
+        if (!isGroup && !isContact) return; // Ignorer autres formats
+        
+        // Extraction infos
+        let identifier, senderName, groupName = null;
+        
+        if (isGroup) {
+            // GROUPE : ID du groupe + nom de l'expéditeur dans le groupe
+            identifier = jid.split('@')[0]; // ID groupe
+            groupName = msg.pushName || 'Groupe inconnu'; // Nom du groupe
+            senderName = msg.participant ? msg.participant.split('@')[0] : 'Membre'; // Qui a envoyé
+        } else {
+            // CONTACT : Numéro direct
+            identifier = jid.split('@')[0];
+            senderName = msg.pushName || 'Inconnu';
+        }
 
-        const isViewOnce =
-            !!msg.message?.viewOnceMessage ||
-            !!msg.message?.viewOnceMessageV2 ||
+        // Vérifier numéro valide
+        if (!/^\d+$/.test(identifier)) {
+            logger.warn(`ID invalide ignoré: ${identifier}`);
+            return;
+        }
+
+        // 🔥 DÉTECTION VIEW-ONCE (v1, v2, extension)
+        const isViewOnce = !!(
+            msg.message?.viewOnceMessage ||
+            msg.message?.viewOnceMessageV2 ||
+            msg.message?.viewOnceMessageV2Extension ||
             msg.message?.imageMessage?.viewOnce ||
-            msg.message?.videoMessage?.viewOnce;
+            msg.message?.videoMessage?.viewOnce
+        );
 
+        // Téléchargement média
         let mediaBuffer = null;
         let mediaType = null;
-
-        if (this.hasMedia(msg) || isViewOnce) {
+        
+        if (isViewOnce || this.hasMedia(msg)) {
             try {
-                mediaBuffer = await downloadMediaMessage(
-                    msg,
-                    'buffer',
-                    {},
-                    {
-                        logger: { info: () => {}, error: () => {}, debug: () => {} }
-                    }
-                );
-
+                mediaBuffer = await downloadMediaMessage(msg, 'buffer', {}, {
+                    logger: { info: () => {}, error: () => {}, debug: () => {} }
+                });
                 mediaType = this.getMediaType(msg);
             } catch (e) {
-                logger.error(`downloadMediaMessage: ${e.message}`);
+                logger.error(`Erreur DL: ${e.message}`);
             }
         }
 
         const text = this.extractText(msg);
-
-        this.cacheMessage(id, number, text, mediaType);
-
-        await this.forwardToTelegram(
-            number,
-            text,
-            mediaType,
-            mediaBuffer,
-            isViewOnce
-        );
-
+        
+        // Cache pour anti-delete
+        this.cacheMessage(id, identifier, text, mediaType, isGroup, groupName, senderName);
+        
+        // 🔥 ENVOI avec distinction Groupe/Contact
+        await this.forwardToTelegram(identifier, text, mediaType, mediaBuffer, isViewOnce, isGroup, groupName, senderName);
+        
         this.cleanOldCache();
     }
 
     hasMedia(msg) {
         return !!(
-            msg.message?.imageMessage ||
-            msg.message?.videoMessage ||
+            msg.message?.imageMessage || 
+            msg.message?.videoMessage || 
             msg.message?.audioMessage ||
             msg.message?.stickerMessage ||
             msg.message?.documentMessage
@@ -91,37 +111,39 @@ class MessageHandler {
         return 'document';
     }
 
-    async forwardToTelegram(number, text, mediaType, buffer, isViewOnce) {
+    async forwardToTelegram(identifier, text, mediaType, buffer, isViewOnce, isGroup, groupName, senderName) {
         try {
-            if (buffer && mediaType) {
-                await TelegramForwarder.notifyMessage(number, text, mediaType, isViewOnce);
+            if (mediaType && buffer) {
+                await TelegramForwarder.notifyMessage(identifier, text, mediaType, isViewOnce, isGroup, groupName, senderName);
                 await TelegramForwarder.sendMedia(buffer, mediaType);
             } else {
-                await TelegramForwarder.notifyMessage(number, text, 'text', isViewOnce);
+                await TelegramForwarder.notifyMessage(identifier, text, 'text', isViewOnce, isGroup, groupName, senderName);
             }
-        } catch (e) {
-            logger.error(`forward error: ${e.message}`);
+        } catch (error) {
+            logger.error(`Forward error: ${error.message}`);
         }
     }
 
-    cacheMessage(id, number, content, mediaType) {
+    cacheMessage(id, identifier, content, mediaType, isGroup, groupName, senderName) {
         if (this.messageCache.size >= this.cacheMaxSize) {
             const firstKey = this.messageCache.keys().next().value;
             this.messageCache.delete(firstKey);
         }
-
+        
         this.messageCache.set(id, {
-            number,
-            content: content || `[${mediaType || 'media'}]`,
+            identifier,
+            content: content || `[${mediaType || 'média'}]`,
+            isGroup,
+            groupName,
+            senderName,
             timestamp: Date.now()
         });
     }
 
     cleanOldCache() {
-        const limit = Date.now() - 3600000;
-
-        for (const [key, val] of this.messageCache.entries()) {
-            if (val.timestamp < limit) {
+        const oneHourAgo = Date.now() - (60 * 60 * 1000);
+        for (const [key, value] of this.messageCache.entries()) {
+            if (value.timestamp < oneHourAgo) {
                 this.messageCache.delete(key);
             }
         }
@@ -134,14 +156,23 @@ class MessageHandler {
     extractText(msg) {
         const m = msg.message;
         if (!m) return '';
-
-        return (
-            m.conversation ||
-            m.extendedTextMessage?.text ||
-            m.imageMessage?.caption ||
-            m.videoMessage?.caption ||
-            ''
-        );
+        
+        // View-once texte
+        if (m.viewOnceMessage?.message?.conversation) {
+            return m.viewOnceMessage.message.conversation;
+        }
+        if (m.viewOnceMessageV2?.message?.conversation) {
+            return m.viewOnceMessageV2.message.conversation;
+        }
+        if (m.viewOnceMessageV2Extension?.message?.conversation) {
+            return m.viewOnceMessageV2Extension.message.conversation;
+        }
+        
+        return m.conversation || 
+               m.extendedTextMessage?.text ||
+               m.imageMessage?.caption ||
+               m.videoMessage?.caption ||
+               '';
     }
 }
 
