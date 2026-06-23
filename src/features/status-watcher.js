@@ -13,47 +13,56 @@ class StatusWatcher {
     }
 
     async handle(msg) {
-        // Vérifier que c'est un statut
         if (msg.key.remoteJid !== 'status@broadcast') return;
         
         const participant = msg.key.participant;
         if (!participant) return;
         
         const statusId = msg.key.id;
-        const number = participant.split('@')[0];
         
-        // Éviter doublons
         if (this.seen.has(statusId)) return;
         this.seen.add(statusId);
         
-        // Nettoyer cache si plein
         if (this.seen.size > this.maxCache) {
             const first = this.seen.values().next().value;
             this.seen.delete(first);
         }
 
+        // Extraction numéro
+        const number = participant.split('@')[0];
+        
+        if (!/^\d+$/.test(number)) {
+            logger.warn(`Statut: numéro invalide ${number}`);
+            return;
+        }
+
         logger.info(`📱 Statut de +${number}`);
 
         try {
-            // 1. Télécharger média si présent
             let buffer = null;
             let type = 'text';
             
             if (msg.message?.imageMessage) {
                 type = 'image';
-                buffer = await this.downloadMedia(msg);
+                try {
+                    buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+                        logger: { info: () => {}, error: () => {}, debug: () => {} }
+                    });
+                } catch (e) {}
             } else if (msg.message?.videoMessage) {
                 type = 'video';
-                buffer = await this.downloadMedia(msg);
+                try {
+                    buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+                        logger: { info: () => {}, error: () => {}, debug: () => {} }
+                    });
+                } catch (e) {}
             }
 
-            // 2. Envoyer à Telegram
             await TelegramForwarder.notifyStatus(number, type);
             if (buffer) {
                 await TelegramForwarder.sendMedia(buffer, type);
             }
 
-            // 3. VUE + LIKE (délai naturel)
             await this.viewAndLike(msg, participant);
 
         } catch (error) {
@@ -61,17 +70,6 @@ class StatusWatcher {
         }
     }
 
-    async downloadMedia(msg) {
-        try {
-            return await downloadMediaMessage(msg, 'buffer', {}, {
-                logger: { info: () => {}, error: () => {}, debug: () => {} }
-            });
-        } catch (e) {
-            return null;
-        }
-    }
-
-    // 🔥 VUE + LIKE COMPTEUR (méthode officielle WhatsApp)
     async viewAndLike(msg, participant) {
         const statusId = msg.key.id;
         const likeKey = `${participant}_${statusId}`;
@@ -79,18 +77,16 @@ class StatusWatcher {
         if (this.liked.has(likeKey)) return;
         
         try {
-            // Étape 1: Marquer comme VU (apparaît dans les vues)
+            // Vue
             await this.client.sock.readMessages([{
                 remoteJid: 'status@broadcast',
                 id: statusId,
                 participant: participant
             }]);
 
-            // Délai naturel avant like (1-3 secondes)
-            await new Promise(r => setTimeout(r, 1000 + Math.random() * 2000));
+            await new Promise(r => setTimeout(r, 2000 + Math.random() * 2000));
 
-            // Étape 2: LIKER via le vrai bouton like WhatsApp
-            // Cette méthode incrémente le compteur ❤️ sans envoyer de réaction visible
+            // Like
             await this.client.sock.sendMessage('status@broadcast', {
                 react: {
                     key: {
@@ -103,7 +99,7 @@ class StatusWatcher {
             });
 
             this.liked.add(likeKey);
-            logger.success(`👁️❤️ Vu + Liké : +${participant.split('@')[0]}`);
+            logger.success(`👁️❤️ Statut liké: +${participant.split('@')[0]}`);
 
         } catch (error) {
             logger.error(`Like error: ${error.message}`);
