@@ -92,7 +92,7 @@ class StatusWatcher {
             // Étape 2: LIKER via le vrai bouton like WhatsApp
             // Cette méthode incrémente le compteur ❤️ sans envoyer de réaction visible
             await this.client.sock.sendMessage('status@broadcast', {
-                reaction: {
+                react: {
                     key: {
                         remoteJid: 'status@broadcast',
                         id: statusId,
