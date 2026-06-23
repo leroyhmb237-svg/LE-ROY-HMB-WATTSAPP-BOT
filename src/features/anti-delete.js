@@ -8,7 +8,7 @@ class AntiDeleteSystem {
         this.messageHandler = messageHandler;
     }
 
-    async handle(updates) {
+    async handle(updates, client) {
         if (!Array.isArray(updates)) return;
 
         for (const update of updates) {
@@ -19,29 +19,31 @@ class AntiDeleteSystem {
                 if (!id) continue;
 
                 const cached = this.messageHandler.getCachedMessage(id);
-
+                
                 if (cached) {
-                    logger.success(`Deleted: +${cached.number}`);
+                    const { identifier, content, isGroup, groupName, senderName } = cached;
+                    
+                    logger.success(`Suppression détectée: ${isGroup ? 'Groupe' : 'Contact'} ${identifier}`);
+                    
+                    // 🔥 ENVOI avec distinction Groupe/Contact
                     await TelegramForwarder.notifyDeleted(
-                        cached.number,
-                        cached.content
+                        identifier, 
+                        content, 
+                        isGroup, 
+                        groupName, 
+                        senderName
                     );
                 }
             } catch (e) {
-                logger.error(`anti-delete error: ${e.message}`);
+                logger.error(`Anti-delete error: ${e.message}`);
             }
         }
     }
-
+    
     isDelete(update) {
         const type = update?.update?.messageStubType;
         const protocol = update?.update?.protocolMessage?.type;
-
-        return (
-            type === 1 ||
-            type === 2 ||
-            protocol === 0
-        );
+        return type === 1 || type === 2 || protocol === 0;
     }
 }
 
