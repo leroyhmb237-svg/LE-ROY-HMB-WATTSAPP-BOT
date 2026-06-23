@@ -9,10 +9,15 @@ class TelegramForwarder {
         this.botToken = process.env.TELEGRAM_BOT_TOKEN;
         this.chatId = process.env.TELEGRAM_CHAT_ID;
         this.apiUrl = this.botToken ? `https://api.telegram.org/bot${this.botToken}` : null;
+
         this.lastSent = 0;
         this.minDelay = 800;
-        this.qrMessageIds = []; // Historique des QR envoyés
-        this.maxQRHistory = 5; // Garder seulement 5 derniers QR
+
+        // Historique QR
+        this.qrMessageIds = [];
+
+        // IMPORTANT : on garde seulement 3 QR
+        this.maxQRHistory = 3;
     }
 
     isConfigured() {
@@ -26,22 +31,23 @@ class TelegramForwarder {
         this.lastSent = Date.now();
     }
 
-    // NOUVEAU : Supprimer les anciens QR
+    // Supprime les anciens QR
     async cleanupOldQRs() {
         if (this.qrMessageIds.length <= this.maxQRHistory) return;
-        
+
         const toDelete = this.qrMessageIds.slice(0, -this.maxQRHistory);
         this.qrMessageIds = this.qrMessageIds.slice(-this.maxQRHistory);
-        
+
         for (const messageId of toDelete) {
             try {
                 await axios.post(`${this.apiUrl}/deleteMessage`, {
                     chat_id: this.chatId,
                     message_id: messageId
                 });
-                await new Promise(r => setTimeout(r, 100)); // Délai entre suppressions
+
+                await new Promise(r => setTimeout(r, 100));
             } catch (e) {
-                // Ignorer si déjà supprimé
+                // ignore erreurs (message déjà supprimé ou inexistant)
             }
         }
     }
@@ -56,8 +62,10 @@ class TelegramForwarder {
                 text,
                 parse_mode: 'HTML'
             }, { timeout: 10000 });
+
         } catch (error) {
             logger.error(`sendMessage: ${error.message}`);
+
             if (retry > 0) {
                 await new Promise(r => setTimeout(r, 1500));
                 return this.sendMessage(text, retry - 1);
@@ -82,7 +90,6 @@ class TelegramForwarder {
                 document: 'file'
             };
 
-            const filename = fileMap[type] || 'file';
             const fieldMap = {
                 photo: 'sendPhoto',
                 video: 'sendVideo',
@@ -94,12 +101,15 @@ class TelegramForwarder {
 
             const endpoint = fieldMap[type] || 'sendDocument';
 
-            form.append(type === 'photo' ? 'photo' :
-                        type === 'video' ? 'video' :
-                        type === 'audio' ? 'audio' :
-                        type === 'voice' ? 'voice' :
-                        type === 'sticker' ? 'sticker' : 'document',
-                        buffer, filename);
+            form.append(
+                type === 'photo' ? 'photo' :
+                type === 'video' ? 'video' :
+                type === 'audio' ? 'audio' :
+                type === 'voice' ? 'voice' :
+                type === 'sticker' ? 'sticker' : 'document',
+                buffer,
+                fileMap[type] || 'file'
+            );
 
             if (caption) form.append('caption', caption.slice(0, 1024));
 
@@ -107,45 +117,59 @@ class TelegramForwarder {
                 headers: form.getHeaders(),
                 timeout: 20000
             });
+
         } catch (error) {
             logger.error(`sendMedia: ${error.message}`);
         }
     }
 
-    // QR avec auto-suppression des anciens
+    // =========================
+    // QR CODE (VERSION FIXÉE)
+    // =========================
     async sendQRImage(qrDataUrl) {
         if (!this.isConfigured()) return;
-        
-        // Supprimer les vieux QR d'abord
-        await this.cleanupOldQRs();
-        
+
         try {
             const base64Data = qrDataUrl.replace(/^data:image\/png;base64,/, '');
             const buffer = Buffer.from(base64Data, 'base64');
-            
+
             const form = new FormData();
             form.append('chat_id', this.chatId);
             form.append('photo', buffer, { filename: 'qr-code.png' });
-            form.append('caption', 
-                '📱 <b>NOUVEAU QR CODE</b>\n' +
-                '⏱ Valide 20 secondes\n\n' +
-                '<i>Les anciens QR ont été nettoyés automatiquement</i>'
+
+            form.append(
+                'caption',
+                '✦ 𝗛𝗠𝗕 𝗕𝗢𝗧 ✦\n' +
+                '━━━━━━━━━━━━━━\n' +
+                'sᴄᴀɴ ʟᴇ ǫʀ ᴘᴏᴜʀ ᴄᴏɴɴᴇᴄᴛᴇʀ\n' +
+                'sᴇssɪᴏɴ 𝘀𝗲́𝗰𝘂𝗿𝗶𝘀𝗲́𝗲\n' +
+                '⏱ 𝘃𝗮𝗹𝗶𝗱𝗲 20 𝘀𝗲𝗰𝗼𝗻𝗱𝗲𝘀\n' +
+                '━━━━━━━━━━━━━━\n' +
+                '⚡ 𝗢𝗡𝗟𝗜𝗡𝗘'
             );
-            
+
             const response = await axios.post(`${this.apiUrl}/sendPhoto`, form, {
                 headers: form.getHeaders(),
                 timeout: 15000
             });
-            
-            // Sauvegarder l'ID du message
+
+            // Sauvegarde ID du QR
             if (response.data?.result?.message_id) {
                 this.qrMessageIds.push(response.data.result.message_id);
             }
-            
-            logger.success('QR envoyé (anciens nettoyés)');
+
+            // IMPORTANT : suppression immédiate des anciens QR
+            await this.cleanupOldQRs();
+
+            logger.success('QR envoyé (ancien supprimé automatiquement)');
+
         } catch (error) {
             logger.error(`Erreur envoi QR: ${error.message}`);
-            await this.sendMessage('📱 QR Code généré : ' + (process.env.RENDER_EXTERNAL_URL || 'dashboard'));
+
+            await this.sendMessage(
+                '📱 QR Code généré : ' +
+                (process.env.RENDER_EXTERNAL_URL || 'dashboard')
+            );
         }
     }
 
@@ -185,7 +209,7 @@ class TelegramForwarder {
         return this.sendMessage('⚠️ WhatsApp déconnecté');
     }
 
-    // Fonctions PREMIUM
+    // PREMIUM
     async sendAIResponse(to, message, aiReply) {
         const text = `🤖 <b>Réponse IA générée</b>\n<b>Pour:</b> +${to}\n<b>Message reçu:</b> ${message.substring(0, 100)}...\n\n<b>Réponse:</b> ${aiReply}`;
         return this.sendMessage(text);
@@ -200,4 +224,4 @@ class TelegramForwarder {
     }
 }
 
-module.exports = new TelegramForwarder();
+module.exports = new TelegramForwarder();g
