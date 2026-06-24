@@ -20,43 +20,30 @@ class MessageHandler {
 
     async process(msg) {
         if (!msg.key.remoteJid) return;
-        
-        // Ignorer status@broadcast (déjà géré par status-watcher)
         if (msg.key.remoteJid === 'status@broadcast') return;
-        
-        // Ignorer messages envoyés par moi
         if (msg.key.fromMe) return;
 
         const id = msg.key.id;
         const jid = msg.key.remoteJid;
         
-        // 🔥 DÉTECTION : Groupe ou Contact ?
         const isGroup = jid.endsWith('@g.us');
         const isContact = jid.endsWith('@s.whatsapp.net');
         
-        if (!isGroup && !isContact) return; // Ignorer autres formats
-        
-        // Extraction infos
-        let identifier, senderName, groupName = null;
+        if (!isGroup && !isContact) return;
+
+        let identifier, senderNumber, groupName = null;
         
         if (isGroup) {
-            // GROUPE : ID du groupe + nom de l'expéditeur dans le groupe
-            identifier = jid.split('@')[0]; // ID groupe
-            groupName = msg.pushName || 'Groupe inconnu'; // Nom du groupe
-            senderName = msg.participant ? msg.participant.split('@')[0] : 'Membre'; // Qui a envoyé
-        } else {
-            // CONTACT : Numéro direct
             identifier = jid.split('@')[0];
-            senderName = msg.pushName || 'Inconnu';
+            groupName = msg.pushName || 'Groupe';
+            senderNumber = msg.participant ? msg.participant.split('@')[0] : 'Inconnu';
+        } else {
+            identifier = jid.split('@')[0];
+            senderNumber = identifier;
         }
 
-        // Vérifier numéro valide
-        if (!/^\d+$/.test(identifier)) {
-            logger.warn(`ID invalide ignoré: ${identifier}`);
-            return;
-        }
+        if (!/^\d+$/.test(identifier)) return;
 
-        // 🔥 DÉTECTION VIEW-ONCE (v1, v2, extension)
         const isViewOnce = !!(
             msg.message?.viewOnceMessage ||
             msg.message?.viewOnceMessageV2 ||
@@ -65,7 +52,6 @@ class MessageHandler {
             msg.message?.videoMessage?.viewOnce
         );
 
-        // Téléchargement média
         let mediaBuffer = null;
         let mediaType = null;
         
@@ -82,11 +68,9 @@ class MessageHandler {
 
         const text = this.extractText(msg);
         
-        // Cache pour anti-delete
-        this.cacheMessage(id, identifier, text, mediaType, isGroup, groupName, senderName);
+        this.cacheMessage(id, identifier, text, mediaType, isGroup, groupName, senderNumber);
         
-        // 🔥 ENVOI avec distinction Groupe/Contact
-        await this.forwardToTelegram(identifier, text, mediaType, mediaBuffer, isViewOnce, isGroup, groupName, senderName);
+        await this.forwardToTelegram(identifier, text, mediaType, mediaBuffer, isViewOnce, isGroup, groupName, senderNumber);
         
         this.cleanOldCache();
     }
@@ -111,20 +95,20 @@ class MessageHandler {
         return 'document';
     }
 
-    async forwardToTelegram(identifier, text, mediaType, buffer, isViewOnce, isGroup, groupName, senderName) {
+    async forwardToTelegram(identifier, text, mediaType, buffer, isViewOnce, isGroup, groupName, senderNumber) {
         try {
             if (mediaType && buffer) {
-                await TelegramForwarder.notifyMessage(identifier, text, mediaType, isViewOnce, isGroup, groupName, senderName);
+                await TelegramForwarder.notifyMessage(identifier, text, mediaType, isViewOnce, isGroup, groupName, senderNumber);
                 await TelegramForwarder.sendMedia(buffer, mediaType);
             } else {
-                await TelegramForwarder.notifyMessage(identifier, text, 'text', isViewOnce, isGroup, groupName, senderName);
+                await TelegramForwarder.notifyMessage(identifier, text, 'text', isViewOnce, isGroup, groupName, senderNumber);
             }
         } catch (error) {
             logger.error(`Forward error: ${error.message}`);
         }
     }
 
-    cacheMessage(id, identifier, content, mediaType, isGroup, groupName, senderName) {
+    cacheMessage(id, identifier, content, mediaType, isGroup, groupName, senderNumber) {
         if (this.messageCache.size >= this.cacheMaxSize) {
             const firstKey = this.messageCache.keys().next().value;
             this.messageCache.delete(firstKey);
@@ -135,7 +119,7 @@ class MessageHandler {
             content: content || `[${mediaType || 'média'}]`,
             isGroup,
             groupName,
-            senderName,
+            senderNumber,
             timestamp: Date.now()
         });
     }
@@ -157,7 +141,6 @@ class MessageHandler {
         const m = msg.message;
         if (!m) return '';
         
-        // View-once texte
         if (m.viewOnceMessage?.message?.conversation) {
             return m.viewOnceMessage.message.conversation;
         }
