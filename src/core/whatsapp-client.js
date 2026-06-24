@@ -122,10 +122,9 @@ class WhatsAppClient {
             this.qr = await QRCode.toDataURL(qr);
             logger.info('QR Code généré - Scan requis');
             
-            // MODIFIÉ : Envoyer QR sur Telegram (image + texte)
+            // 🔥 UNIQUEMENT l'image (pas de texte séparé)
             await TelegramForwarder.sendQRImage(this.qr);
             
-            // Envoyer sur le web
             this.io?.emit('qr', this.qr);
         }
 
